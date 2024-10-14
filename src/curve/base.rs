@@ -54,6 +54,17 @@ pub struct SwapResult {
     /// Amount of tokens being burnt
     pub burn_fee: u128,
 }
+/// Stores the result of the burn amount 
+pub struct BurnSwapResult {
+    /// New amount of source token
+    pub new_swap_source_amount: u128,
+    /// New amount of destination token
+    pub new_swap_destination_amount: u128,
+    /// Amount of source token swapped (includes fees)
+    pub source_amount_swapped: u128,
+    /// Amount of destination token swapped
+    pub destination_amount_swapped: u128,
+}
 
 /// Concrete struct to wrap around the trait object which performs calculation.
 #[repr(C)]
@@ -81,9 +92,9 @@ impl SwapCurve {
         // debit the fee to calculate the amount swapped
         let trade_fee = fees.trading_fee(source_amount)?;
         let owner_fee = fees.owner_trading_fee(source_amount)?;
-        let burn_fee = fees.burn_fee(source_amount)?;
+        let burn_fee = fees.burn_fee(trade_fee)?;
 
-        let total_fees = trade_fee.checked_add(owner_fee)?.checked_add(burn_fee)?;
+        let total_fees = trade_fee.checked_add(owner_fee)?;
         let source_amount_less_fees = source_amount.checked_sub(total_fees)?;
 
         let SwapWithoutFeesResult {
@@ -106,6 +117,35 @@ impl SwapCurve {
             trade_fee,
             owner_fee,
             burn_fee
+        })
+    }
+
+    /// To calculate how much equivalent tokens would be burned on swapping SOL 
+    pub fn burn_swap(
+        &self,
+        source_amount: u128,
+        swap_source_amount: u128,
+        swap_destination_amount: u128,
+        trade_direction: TradeDirection,
+    ) -> Option<BurnSwapResult> {
+        // debit the fee to calculate the amount swapped
+        let SwapWithoutFeesResult {
+            source_amount_swapped,
+            destination_amount_swapped,
+        } = self.calculator.swap_without_fees(
+            source_amount,
+            swap_source_amount,
+            swap_destination_amount,
+            trade_direction,
+        )?;
+
+        let source_amount_swapped = source_amount_swapped;
+        Some(BurnSwapResult {
+            new_swap_source_amount: swap_source_amount.checked_add(source_amount_swapped)?,
+            new_swap_destination_amount: swap_destination_amount
+                .checked_sub(destination_amount_swapped)?,
+            source_amount_swapped,
+            destination_amount_swapped,
         })
     }
 

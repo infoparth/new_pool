@@ -125,6 +125,10 @@ pub enum SwapError {
     /// The owner of the SOL account is invalid
     #[error("The Swap authority needs to be the owner")]
     InvalidSolAccountOwner,
+
+    /// The Burn fee mint address is invalid
+    #[error("Invalid Burn Account Mint")]
+    InvalidBurnMint
 }
 impl From<SwapError> for ProgramError {  
     fn from(e: SwapError) -> Self {
@@ -213,6 +217,9 @@ impl PrintProgramError for SwapError {
             }
             SwapError::InvalidSolAccountOwner => {
                 msg!("Error: The sol account owner needs to be the swap authority");
+            }
+            SwapError::InvalidBurnMint => {
+                msg!("Error: The Burn mint account is invalid")
             }
 
         }

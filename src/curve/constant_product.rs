@@ -362,6 +362,9 @@ mod tests {
         expected_destination_amount_swapped: u128,
     ) {
         let invariant = swap_source_amount * swap_destination_amount;
+            println!("------------------------------------------------------");
+            println!("Printing the values and assertions here");
+            println!("------------------------------------------------------");
         let result = curve
             .swap_without_fees(
                 source_amount,
@@ -410,6 +413,9 @@ mod tests {
             (99, 60_000, 30_000, 99, 49),
             // spot: 98 * 3 / 6.001 = 48.99 (source can be 97 to get 48 dest.)
             (98, 60_000, 30_000, 97, 48),
+
+            (100_000_000, 10_000_000_000, 130_000_000_000, 100_000_000, 1287128712)
+
         ];
         for (
             source_amount,
@@ -419,6 +425,10 @@ mod tests {
             expected_destination_amount,
         ) in tests.iter()
         {
+            println!("------------------------------------------------------");
+            println!("Printing the values and assertions here");
+            println!("------------------------------------------------------");
+            println!("The value being taken into account is: {}", *source_amount);
             test_truncation(
                 &curve,
                 *source_amount,

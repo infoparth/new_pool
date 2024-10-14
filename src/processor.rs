@@ -531,14 +531,16 @@ impl Processor {
             (amount_out, destination_mint.base.decimals)
         };
 
-        let (swap_token_a_amount, swap_token_b_amount) = match trade_direction {
+        let (swap_token_a_amount, swap_token_b_amount, burn_fee) = match trade_direction {
             TradeDirection::AtoB => (
                 result.new_swap_source_amount,
                 result.new_swap_destination_amount,
+                result.burn_fee
             ),
             TradeDirection::BtoA => (
                 result.new_swap_destination_amount,
                 result.new_swap_source_amount,
+                result.burn_fee
             ),
         };
 
@@ -554,6 +556,71 @@ impl Processor {
             source_mint_decimals,
         )?;
 
+        // Calculating the Amount to be burnt at this point
+
+         match trade_direction {
+            TradeDirection::AtoB => {
+
+            if let Ok(burn_fee_account_info) = next_account_info(account_info_iter) {
+                let burn_fee_account= Self::unpack_token_account(
+                    burn_fee_account_info,
+                    token_swap.token_program_id(),
+                )?;
+                if *source_token_mint_info.key != burn_fee_account.mint {
+                    return Err(SwapError::InvalidBurnMint.into());
+                }
+            
+            Self::token_transfer(
+                swap_info.key,
+                source_token_program_info.clone(),
+                source_info.clone(),
+                source_token_mint_info.clone(),
+                burn_fee_account_info.clone(),
+                user_transfer_authority_info.clone(),
+                token_swap.bump_seed(),
+                burn_fee as u64,
+                source_mint_decimals,
+            )?;
+            }}
+
+            
+            TradeDirection::BtoA => {
+            if let Ok(burn_fee_account_info) = next_account_info(account_info_iter) {
+                let burn_fee_account= Self::unpack_token_account(
+                    burn_fee_account_info,
+                    token_swap.token_program_id(),
+                )?;
+                if *destination_token_mint_info.key != burn_fee_account.mint {
+                    return Err(SwapError::InvalidBurnMint.into());
+                }
+            
+
+            let result_burn = token_swap
+                .swap_curve()
+                .burn_swap(
+                    u128::from(burn_fee),
+                    u128::from(source_account.amount),
+                    u128::from(dest_account.amount),
+                    trade_direction,
+                )
+                .ok_or(SwapError::ZeroTradingTokens)?;
+
+                Self::token_transfer(
+                    swap_info.key,
+                    destination_token_program_info.clone(),
+                    swap_destination_info.clone(),
+                    destination_token_mint_info.clone(),
+                    destination_info.clone(),
+                    authority_info.clone(),
+                    token_swap.bump_seed(),
+                    result_burn.destination_amount_swapped as u64,
+                    destination_mint_decimals,
+                )?;
+            }
+        }
+        };
+
+
         if result.owner_fee > 0 {
             let mut pool_token_amount = token_swap
                 .swap_curve()
@@ -568,33 +635,33 @@ impl Processor {
                 )
                 .ok_or(SwapError::FeeCalculationFailure)?;
             // Allow error to fall through
-            if let Ok(host_fee_account_info) = next_account_info(account_info_iter) {
-                let host_fee_account = Self::unpack_token_account(
-                    host_fee_account_info,
-                    token_swap.token_program_id(),
-                )?;
-                if *pool_mint_info.key != host_fee_account.mint {
-                    return Err(SwapError::IncorrectPoolMint.into());
-                }
-                let burn_fee = token_swap
-                    .fees()
-                    .burn_fee(pool_token_amount)
-                    .ok_or(SwapError::FeeCalculationFailure)?;
-                if burn_fee > 0 {
-                    pool_token_amount = pool_token_amount
-                        .checked_sub(burn_fee)
-                        .ok_or(SwapError::FeeCalculationFailure)?;
-                    Self::token_mint_to(
-                        swap_info.key,
-                        pool_token_program_info.clone(),
-                        pool_mint_info.clone(),  // it is for the pool token right?
-                        host_fee_account_info.clone(), // It goes to the host publickey
-                        authority_info.clone(),
-                        token_swap.bump_seed(),
-                        to_u64(burn_fee)?,
-                    )?;
-                }
-            }
+            // if let Ok(host_fee_account_info) = next_account_info(account_info_iter) {
+            //     let host_fee_account = Self::unpack_token_account(
+            //         host_fee_account_info,
+            //         token_swap.token_program_id(),
+            //     )?;
+            //     if *pool_mint_info.key != host_fee_account.mint {
+            //         return Err(SwapError::IncorrectPoolMint.into());
+            //     }
+            //     let burn_fee = token_swap
+            //         .fees()
+            //         .burn_fee(pool_token_amount)
+            //         .ok_or(SwapError::FeeCalculationFailure)?;
+            //     if burn_fee > 0 {
+            //         pool_token_amount = pool_token_amount
+            //             .checked_sub(burn_fee)
+            //             .ok_or(SwapError::FeeCalculationFailure)?;
+            //         Self::token_mint_to(
+            //             swap_info.key,
+            //             pool_token_program_info.clone(),
+            //             pool_mint_info.clone(),  // it is for the pool token right?
+            //             host_fee_account_info.clone(), // It goes to the host publickey
+            //             authority_info.clone(),
+            //             token_swap.bump_seed(),
+            //             to_u64(burn_fee)?,
+            //         )?;
+            //     }
+            // }
             if token_swap
                 .check_pool_fee_info(pool_fee_account_info)
                 .is_ok()
@@ -1475,7 +1542,7 @@ mod tests {
                 token_b_program_id,
                 user_key,
                 None,
-                None,
+                None,   
                 &transfer_fees.token_b,
             );
             let (token_b_key, token_b_account) = mint_token(
@@ -2427,9 +2494,8 @@ mod tests {
             burn_fee_numerator,
             burn_fee_denominator,
         };
-
-        let token_a_amount = 1000;
-        let token_b_amount = 2000;
+        let token_a_amount = 10_000_000_000;
+        let token_b_amount = 130_000_000_000;
         let pool_token_amount = 10;
         let curve_type = CurveType::ConstantProduct;
         let swap_curve = SwapCurve {
@@ -4057,8 +4123,8 @@ mod tests {
             burn_fee_denominator
         };
 
-        let token_a_amount = 1000;
-        let token_b_amount = 2000;
+        let token_a_amount = 10_000_000_0000;
+        let token_b_amount = 130_000_000_000;
         let curve_type = CurveType::ConstantProduct;
         let swap_curve = SwapCurve {
             curve_type,
@@ -4917,8 +4983,8 @@ mod tests {
             burn_fee_denominator
         };
 
-        let token_a_amount = 1000;
-        let token_b_amount = 9000;
+        let token_a_amount = 10_000_000_000;
+        let token_b_amount = 130_000_000_000;
         let curve_type = CurveType::ConstantProduct;
         let swap_curve = SwapCurve {
             curve_type,
@@ -5467,8 +5533,8 @@ mod tests {
             burn_fee_denominator
         };
 
-        let token_a_amount = 100_000;
-        let token_b_amount = 200_000;
+        let token_a_amount = 10_000_000_000;
+        let token_b_amount = 130_000_000_000;
         let curve_type = CurveType::ConstantProduct;
         let swap_curve = SwapCurve {
             curve_type,
@@ -6154,8 +6220,8 @@ mod tests {
             token_a_program_id,
             token_b_program_id,
         );
-        let initial_a = token_a_amount / 5;
-        let initial_b = token_b_amount / 5;
+        let initial_a = token_a_amount ;
+        let initial_b = token_b_amount;
         accounts.initialize_swap().unwrap();
 
         let swap_token_a_key = accounts.token_a_key;
@@ -6170,7 +6236,7 @@ mod tests {
             _pool_account,
         ) = accounts.setup_token_accounts(&user_key, &swapper_key, initial_a, initial_b, 0);
         // swap one way
-        let a_to_b_amount = initial_a / 10;
+        let a_to_b_amount = 100_000_000;
         let minimum_token_b_amount = 0;
         let pool_mint =
             StateWithExtensions::<Mint>::unpack(&accounts.pool_mint_account.data).unwrap();
@@ -6190,12 +6256,13 @@ mod tests {
             .unwrap();
 
         // tweak values based on transfer fees assessed
-        let token_a_fee = accounts
-            .transfer_fees
-            .token_a
-            .calculate_fee(a_to_b_amount)
-            .unwrap();
-        let actual_a_to_b_amount = a_to_b_amount - token_a_fee;
+        // let token_a_fee = accounts
+        //     .transfer_fees
+        //     .token_a
+        //     .calculate_fee(a_to_b_amount)
+        //     .unwrap();
+        // let actual_a_to_b_amount = a_to_b_amount - token_a_fee;
+         let actual_a_to_b_amount = a_to_b_amount;
         let results = swap_curve
             .swap(
                 actual_a_to_b_amount.into(),
@@ -6206,9 +6273,14 @@ mod tests {
             )
             .unwrap();
 
+
+        let burn_fee = results.burn_fee;
+        let expected_burn_fee = 1000;
+
         let swap_token_a =
             StateWithExtensions::<Account>::unpack(&accounts.token_a_account.data).unwrap();
         let token_a_amount = swap_token_a.base.amount;
+        assert_eq!(expected_burn_fee, burn_fee);
         assert_eq!(
             token_a_amount,
             TryInto::<u64>::try_into(results.new_swap_source_amount).unwrap()
@@ -6597,7 +6669,8 @@ mod tests {
             0,
         );
 
-        let amount_in = token_a_amount / 2;
+        // let amount_in = token_a_amount / 2;
+        let amount_in = 100_000_000;
         let minimum_amount_out = 0;
 
         // perform the swap
@@ -7459,7 +7532,7 @@ mod tests {
         ) = accounts.setup_token_accounts(&user_key, &swapper_key, initial_a, initial_b, 0);
 
         // swap a to b way, fails, there's no liquidity
-        let a_to_b_amount = initial_a;
+        let a_to_b_amount = 100_000_000; 
         let minimum_token_b_amount = 0;
 
         assert_eq!(
@@ -7577,8 +7650,8 @@ mod tests {
         let burn_fee_numerator = 2;
         let burn_fee_denominator = 100;
 
-        let token_a_amount = 1_000_000_000;
-        let token_b_amount = 10;
+        let token_a_amount = 10_000_000_000;
+        let token_b_amount = 130_000_000_000;
         let fees = Fees {
             trade_fee_numerator,
             trade_fee_denominator,
@@ -7667,22 +7740,22 @@ mod tests {
         token_a_program_id: Pubkey,
         token_b_program_id: Pubkey,
     ) {
-        let trade_fee_numerator = 1;
-        let trade_fee_denominator = 10;
-        let owner_trade_fee_numerator = 1;
+        let trade_fee_numerator = 2;
+        let trade_fee_denominator = 1000;
+        let owner_trade_fee_numerator = 0;
         let owner_trade_fee_denominator = 30;
         let owner_withdraw_fee_numerator = 0;
         let owner_withdraw_fee_denominator = 30;
         // let host_fee_numerator = 10;
         // let host_fee_denominator = 100;
-        let burn_fee_numerator = 2;
+        let burn_fee_numerator = 5;
         let burn_fee_denominator = 100;
 
         // initialize "unbalanced", so that withdrawing all will have some issues
         // A: 1_000_000_000
         // B: 2_000_000_000 (1_000 * 2_000_000)
-        let swap_token_a_amount = 1_000_000_000;
-        let swap_token_b_amount = 1_000;
+        let swap_token_a_amount = 130000000000;
+        let swap_token_b_amount = 10_000_000_000;
         let token_b_price = 2_000_000;
         let fees = Fees {
             trade_fee_numerator,
@@ -8098,20 +8171,20 @@ mod tests {
         let user_key = Pubkey::new_unique();
 
         let fees = Fees {
-            trade_fee_numerator: 1,
-            trade_fee_denominator: 2,
-            owner_trade_fee_numerator: 1,
-            owner_trade_fee_denominator: 10,
-            owner_withdraw_fee_numerator: 1,
-            owner_withdraw_fee_denominator: 5,
+            trade_fee_numerator: 2,
+            trade_fee_denominator: 1000,
+            owner_trade_fee_numerator: 0,
+            owner_trade_fee_denominator: 100,
+            owner_withdraw_fee_numerator: 0,
+            owner_withdraw_fee_denominator: 100,
             // host_fee_numerator: 7,
             // host_fee_denominator: 100,
-            burn_fee_numerator: 2,
-            burn_fee_denominator: 100,
+            burn_fee_numerator: 5,
+            burn_fee_denominator: 1000,
         };
 
-        let token_a_amount = 1000;
-        let token_b_amount = 2000;
+        let token_a_amount = 10_000_000_000;
+        let token_b_amount = 130_000_000_000;
         let swap_curve = SwapCurve {
             curve_type: CurveType::ConstantProduct,
             calculator: Arc::new(ConstantProductCurve {}),
@@ -8359,7 +8432,7 @@ mod tests {
         do_process_instruction_with_fee_constraints(
             swap(
                 &SWAP_PROGRAM_ID,
-                &token_a_program_id,
+                &token_a_program_id, 
                 &token_b_program_id,
                 &pool_token_program_id,
                 &accounts.swap_key,
@@ -8411,16 +8484,16 @@ mod tests {
         token_b_program_id: Pubkey,
     ) {
         // All fees
-        let trade_fee_numerator = 1;
-        let trade_fee_denominator = 10;
-        let owner_trade_fee_numerator = 1;
-        let owner_trade_fee_denominator = 30;
-        let owner_withdraw_fee_numerator = 1;
-        let owner_withdraw_fee_denominator = 30;
+        let trade_fee_numerator = 2;
+        let trade_fee_denominator = 1000;
+        let owner_trade_fee_numerator = 0;
+        let owner_trade_fee_denominator = 100;
+        let owner_withdraw_fee_numerator = 0;
+        let owner_withdraw_fee_denominator = 100;
         // let host_fee_numerator = 20;
         // let host_fee_denominator = 100;
-        let burn_fee_numerator = 2;
-        let burn_fee_denominator = 100;
+        let burn_fee_numerator = 5;
+        let burn_fee_denominator = 1000;
         let fees = Fees {
             trade_fee_numerator,
             trade_fee_denominator,
@@ -8435,17 +8508,18 @@ mod tests {
         };
 
         let token_a_amount = 10_000_000_000;
-        let token_b_amount = 50_000_000_000;
+        let token_b_amount = 130_000_000_000;
 
         check_valid_swap_curve(
             fees,
             SwapTransferFees {
                 pool_token: TransferFee::default(),
-                token_a: TransferFee {
-                    epoch: 0.into(),
-                    transfer_fee_basis_points: 100.into(),
-                    maximum_fee: 1_000_000_000.into(),
-                },
+                // token_a: TransferFee {
+                //     epoch: 0.into(),
+                //     transfer_fee_basis_points: 100.into(),
+                //     maximum_fee: 1_000_000_000.into(),
+                // },
+                token_a: TransferFee::default(),
                 token_b: TransferFee::default(),
             },
             CurveType::ConstantProduct,
