@@ -558,8 +558,7 @@ impl Processor {
 
         // Calculating the Amount to be burnt at this point
 
-         match trade_direction {
-            TradeDirection::AtoB => {
+         if trade_direction == TradeDirection::AtoB  {
 
             if let Ok(burn_fee_account_info) = next_account_info(account_info_iter) {
                 let burn_fee_account= Self::unpack_token_account(
@@ -573,10 +572,10 @@ impl Processor {
             Self::token_transfer(
                 swap_info.key,
                 source_token_program_info.clone(),
-                source_info.clone(),
+                swap_source_info.clone(),
                 source_token_mint_info.clone(),
                 burn_fee_account_info.clone(),
-                user_transfer_authority_info.clone(),
+                authority_info.clone(),
                 token_swap.bump_seed(),
                 burn_fee as u64,
                 source_mint_decimals,
@@ -584,7 +583,7 @@ impl Processor {
             }}
 
             
-            TradeDirection::BtoA => {
+            else if trade_direction == TradeDirection::BtoA {
             if let Ok(burn_fee_account_info) = next_account_info(account_info_iter) {
                 let burn_fee_account= Self::unpack_token_account(
                     burn_fee_account_info,
@@ -610,15 +609,15 @@ impl Processor {
                     destination_token_program_info.clone(),
                     swap_destination_info.clone(),
                     destination_token_mint_info.clone(),
-                    destination_info.clone(),
+                    burn_fee_account_info.clone(), // This line was changed here from destination_info.clone() to what it is now...
                     authority_info.clone(),
                     token_swap.bump_seed(),
                     result_burn.destination_amount_swapped as u64,
                     destination_mint_decimals,
                 )?;
             }
-        }
         };
+
 
 
         if result.owner_fee > 0 {
@@ -634,34 +633,6 @@ impl Processor {
                     RoundDirection::Floor,
                 )
                 .ok_or(SwapError::FeeCalculationFailure)?;
-            // Allow error to fall through
-            // if let Ok(host_fee_account_info) = next_account_info(account_info_iter) {
-            //     let host_fee_account = Self::unpack_token_account(
-            //         host_fee_account_info,
-            //         token_swap.token_program_id(),
-            //     )?;
-            //     if *pool_mint_info.key != host_fee_account.mint {
-            //         return Err(SwapError::IncorrectPoolMint.into());
-            //     }
-            //     let burn_fee = token_swap
-            //         .fees()
-            //         .burn_fee(pool_token_amount)
-            //         .ok_or(SwapError::FeeCalculationFailure)?;
-            //     if burn_fee > 0 {
-            //         pool_token_amount = pool_token_amount
-            //             .checked_sub(burn_fee)
-            //             .ok_or(SwapError::FeeCalculationFailure)?;
-            //         Self::token_mint_to(
-            //             swap_info.key,
-            //             pool_token_program_info.clone(),
-            //             pool_mint_info.clone(),  // it is for the pool token right?
-            //             host_fee_account_info.clone(), // It goes to the host publickey
-            //             authority_info.clone(),
-            //             token_swap.bump_seed(),
-            //             to_u64(burn_fee)?,
-            //         )?;
-            //     }
-            // }
             if token_swap
                 .check_pool_fee_info(pool_fee_account_info)
                 .is_ok()
